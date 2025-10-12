@@ -221,6 +221,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.login_window)
         self.resize(1000, 700)
 
+
     def show_main_window(self):
         central_widget = QWidget()
         layout = QVBoxLayout()
@@ -1394,13 +1395,14 @@ class MainWindow(QMainWindow):
         return widget
 
     def toggle_all_courses(self, checked):
+        """Tüm dersleri seç/kaldır"""
         for i in range(self.course_include_table.rowCount()):
             widget = self.course_include_table.cellWidget(i, 0)
             if widget:
                 # Widget içindeki checkbox'ı bul
-                cb = widget.findChild(QCheckBox)
-                if cb:
-                    cb.setChecked(checked)
+                checkbox = widget.layout().itemAt(0).widget()
+                if checkbox and isinstance(checkbox, QCheckBox):
+                    checkbox.setChecked(checked)
 
     def load_courses_for_schedule(self):
         cursor = self.db.conn.cursor()
@@ -1411,11 +1413,15 @@ class MainWindow(QMainWindow):
 
         self.course_include_table.setRowCount(len(courses))
         self.course_include_ids = {}
+        self.course_checkboxes = []  # CHECKBOX'LARI SAKLAMAK İÇİN LİSTE
 
         for i, (cid, code, name, year) in enumerate(courses):
-            # Checkbox - ortalı
+            # Checkbox - basit yöntem
             cb = QCheckBox()
             cb.setChecked(True)
+            self.course_checkboxes.append(cb)  # LİSTEYE EKLE
+
+            # Ortalamak için widget kullan
             checkbox_widget = QWidget()
             checkbox_layout = QHBoxLayout(checkbox_widget)
             checkbox_layout.addWidget(cb)
@@ -1443,6 +1449,11 @@ class MainWindow(QMainWindow):
         # Satır yüksekliğini ayarla
         for i in range(len(courses)):
             self.course_include_table.setRowHeight(i, 35)
+
+    def toggle_all_courses(self, checked):
+        """Tüm dersleri seç/kaldır - LİSTEDEN KULLAN"""
+        for cb in self.course_checkboxes:
+            cb.setChecked(checked)
 
     def add_exception_row(self):
         row = self.exception_table.rowCount()
@@ -1502,7 +1513,8 @@ class MainWindow(QMainWindow):
             # Dahil edilen dersleri al
             included_courses = []
             for i in range(self.course_include_table.rowCount()):
-                if self.course_include_table.cellWidget(i, 0).isChecked():
+                # LİSTEDEN CHECKBOX AL
+                if i < len(self.course_checkboxes) and self.course_checkboxes[i].isChecked():
                     included_courses.append(self.course_include_ids[i])
 
             if not included_courses:
@@ -1884,7 +1896,8 @@ class MainWindow(QMainWindow):
             # Dahil edilen dersleri al
             included_courses = []
             for i in range(self.course_include_table.rowCount()):
-                if self.course_include_table.cellWidget(i, 0).isChecked():
+                # LİSTEDEN CHECKBOX AL
+                if i < len(self.course_checkboxes) and self.course_checkboxes[i].isChecked():
                     included_courses.append(self.course_include_ids[i])
 
             if not included_courses:
@@ -2043,7 +2056,7 @@ class MainWindow(QMainWindow):
 
             QMessageBox.information(self, 'Başarılı', info_msg)
 
-            self.refresh_tabs()
+            self.load_exams()
 
         except Exception as e:
             QMessageBox.critical(self, 'Hata', f'Program oluşturulurken hata oluştu:\n{str(e)}')

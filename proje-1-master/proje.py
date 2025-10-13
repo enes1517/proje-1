@@ -26,6 +26,8 @@ import datetime
 import random
 import pulp
 
+
+
 def turkish_to_ascii(text):
     """Türkçe karakterleri ASCII'ye çevir"""
     replacements = {

@@ -181,25 +181,42 @@ class LoginWindow(QWidget):
         self.password.setStyleSheet("padding: 8px; border: 1px solid #ccc; border-radius: 4px;")
         layout.addWidget(self.password)
         login_btn = QPushButton('Giriş Yap')
-        login_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 10px; border: none; border-radius: 4px;")
+        login_btn.setStyleSheet(
+            "background-color: #4CAF50; color: white; padding: 10px; border: none; border-radius: 4px;")
         login_btn.clicked.connect(self.login)
         layout.addWidget(login_btn)
         layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
         self.setLayout(layout)
 
     def login(self):
-        email = self.email.text()
-        password = self.password.text()
+        email = self.email.text().strip()
+        password = self.password.text().strip()
+
+        if not email or not password:
+            QMessageBox.warning(self, 'Hata', 'E-posta ve şifre gereklidir.')
+            return
+
         db = Database()
-        cursor = db.conn.cursor()
-        cursor.execute('SELECT id, role, department_id FROM users WHERE email=? AND password=?', (email, password))
-        user = cursor.fetchone()
-        if user:
-            self.parent.user = {'id': user[0], 'role': user[1], 'department_id': user[2]}
-            self.parent.show_main_window()
-        else:
-            QMessageBox.warning(self, 'Hata', 'Geçersiz kimlik bilgileri')
-        db.close()
+        try:
+            cursor = db.conn.cursor()
+            cursor.execute('SELECT id, email, role, department_id FROM users WHERE email=? AND password=?',
+                           (email, password))
+            user = cursor.fetchone()
+
+            if user:
+                self.parent.user = {
+                    'id': user[0],
+                    'email': user[1],  # EMAIL EKLENDI
+                    'role': user[2],
+                    'department_id': user[3]
+                }
+                self.parent.show_main_window()
+            else:
+                QMessageBox.warning(self, 'Hata', 'Geçersiz kimlik bilgileri')
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Giriş işlemi başarısız:\n{str(e)}')
+        finally:
+            db.close()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -223,96 +240,360 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.login_window)
         self.resize(1000, 700)
 
-
     def show_main_window(self):
         central_widget = QWidget()
         layout = QVBoxLayout()
+
+        # TOOLBAR
+        toolbar_layout = QHBoxLayout()
+
+        # Kullanıcı bilgisi
+        user_info = QLabel(f"👤 {self.user['email']} ({self.user['role']})")
+        user_info.setStyleSheet("font-weight: bold; padding: 5px;")
+        toolbar_layout.addWidget(user_info)
+
+        # Boşluk
+        toolbar_layout.addStretch()
+
+        # Çıkış butonu
+        logout_btn = QPushButton('Çıkış')
+        logout_btn.setStyleSheet(
+            "QPushButton { background-color: #f44336; color: white; padding: 8px 15px; "
+            "border-radius: 4px; font-weight: bold; }"
+            "QPushButton:hover { background-color: #d32f2f; }"
+        )
+        logout_btn.clicked.connect(self.logout)
+        toolbar_layout.addWidget(logout_btn)
+
+        # Toolbar grubu
+        toolbar_widget = QWidget()
+        toolbar_widget.setLayout(toolbar_layout)
+        toolbar_widget.setStyleSheet("background-color: #f5f5f5; border-bottom: 1px solid #ddd; padding: 5px;")
+        layout.addWidget(toolbar_widget)
+
+        # TAB WIDGET
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("QTabWidget::tab { background: #e0e0e0; padding: 10px; }")
 
+        # Admin sekmesi - sadece Admin için
         if self.user['role'] == 'Admin':
             self.tab_widget.addTab(self.admin_tab(), 'Admin İşlemleri')
 
-        classroom_tab = self.classroom_tab()
-        self.tab_widget.addTab(classroom_tab, 'Derslik Girişi')
-
-        dep_id = self.user['department_id'] if self.user['role'] == 'Bölüm Koordinatörü' else None
-        has_classrooms = self.db.has_classrooms(dep_id) if dep_id else True
-
-        if has_classrooms:
-            course_upload_tab = self.course_upload_tab()
-            self.tab_widget.addTab(course_upload_tab, 'Ders Listesi Yükle')
-            student_upload_tab = self.student_upload_tab()
-            self.tab_widget.addTab(student_upload_tab, 'Öğrenci Listesi Yükle')
-
-            has_courses = self.db.has_courses(dep_id) if dep_id else True
-            if has_courses:
-                self.tab_widget.addTab(self.student_list_tab(), 'Öğrenci Listesi')
-                self.tab_widget.addTab(self.course_list_tab(), 'Ders Listesi')
-
-            has_students = self.db.has_students(dep_id) if dep_id else True
-            if has_students and has_courses:
-                self.tab_widget.addTab(self.exam_schedule_tab(), 'Sınav Programı Oluştur')
-                self.tab_widget.addTab(self.seating_plan_tab(), 'Oturma Planı')
-            elif has_courses and not has_students:
-                note = QLabel('Öğrenci listesi yüklenmeden sınav programı oluşturulamaz.')
-                note.setStyleSheet("color: red; font-weight: bold;")
-                layout.addWidget(note)
-        else:
-            note = QLabel('Derslik bilgileri girilmeden diğer işlemler yapılamaz.')
-            note.setStyleSheet("color: red; font-weight: bold;")
-            layout.addWidget(note)
+        # Tüm diğer sekmeler - Admin ve Bölüm Koordinatörü için direkt açılsın
+        self.tab_widget.addTab(self.classroom_tab(), 'Derslik Girişi')
+        self.tab_widget.addTab(self.course_upload_tab(), 'Ders Listesi Yükle')
+        self.tab_widget.addTab(self.student_upload_tab(), 'Öğrenci Listesi Yükle')
+        self.tab_widget.addTab(self.student_list_tab(), 'Öğrenci Listesi')
+        self.tab_widget.addTab(self.course_list_tab(), 'Ders Listesi')
+        self.tab_widget.addTab(self.exam_schedule_tab(), 'Sınav Programı Oluştur')
+        self.tab_widget.addTab(self.seating_plan_tab(), 'Oturma Planı')
 
         layout.addWidget(self.tab_widget)
         central_widget.setLayout(layout)
         self.setCentralWidget(central_widget)
 
-    def refresh_tabs(self):
-        self.show_main_window()
+    def logout(self):
+        """Çıkış işlemi"""
+        reply = QMessageBox.question(
+            self, 'Çıkış Onayı',
+            f'{self.user["email"]} hesabından çıkış yapılacak.\n\nEmin misiniz?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.tab_widget = None
+            self.user = None
+
+            # Login ekranına geri dön
+            login_window = LoginWindow(self)
+            self.setCentralWidget(login_window)
+            self.setWindowTitle('Dinamik Sınav Takvimi Oluşturma Sistemi')
+
+    def closeEvent(self, event):
+        """Pencere kapanırken"""
+        try:
+            self.db.close()
+        except:
+            pass
+        event.accept()
+
 
     def admin_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        add_user_btn = QPushButton('Yeni Kullanıcı Ekle')
+
+        # Başlık
+        title = QLabel('Admin Yönetim Paneli')
+        title.setStyleSheet("font-size: 14pt; font-weight: bold; padding: 10px; background-color: #FFEBEE;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # Kullanıcı Yönetimi Grubu
+        user_group = QGroupBox('Kullanıcı Yönetimi')
+        user_layout = QVBoxLayout()
+
+        # Butonlar
+        button_layout = QHBoxLayout()
+
+        add_user_btn = QPushButton('➕ Yeni Kullanıcı Ekle')
+        add_user_btn.setStyleSheet(
+            "QPushButton { background-color: #4CAF50; color: white; padding: 10px; "
+            "font-size: 11pt; font-weight: bold; border-radius: 5px; }"
+            "QPushButton:hover { background-color: #45a049; }"
+        )
         add_user_btn.clicked.connect(self.add_user)
-        layout.addWidget(add_user_btn)
-        layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+        button_layout.addWidget(add_user_btn)
+
+        view_users_btn = QPushButton('👥 Kullanıcıları Görüntüle')
+        view_users_btn.setStyleSheet(
+            "QPushButton { background-color: #2196F3; color: white; padding: 10px; "
+            "font-size: 11pt; font-weight: bold; border-radius: 5px; }"
+            "QPushButton:hover { background-color: #0b7dda; }"
+        )
+        view_users_btn.clicked.connect(self.view_users)
+        button_layout.addWidget(view_users_btn)
+
+        button_layout.addStretch()
+        user_layout.addLayout(button_layout)
+
+        # Kullanıcı Listesi Tablosu
+        self.users_table = QTableWidget()
+        self.users_table.setColumnCount(5)
+        self.users_table.setHorizontalHeaderLabels(['ID', 'E-posta', 'Rol', 'Bölüm', 'İşlemler'])
+        self.users_table.horizontalHeader().setStretchLastSection(True)
+        self.users_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.users_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.users_table.setMinimumHeight(300)
+        self.load_users_table()
+
+        user_layout.addWidget(self.users_table)
+        user_group.setLayout(user_layout)
+        layout.addWidget(user_group)
+
+        # İstatistikler Grubu
+        stats_group = QGroupBox('Sistem İstatistikleri')
+        stats_layout = QGridLayout()
+
+        # İstatistikleri yükle
+        cursor = self.db.conn.cursor()
+
+        # Toplam kullanıcı
+        cursor.execute('SELECT COUNT(*) FROM users')
+        total_users = cursor.fetchone()[0]
+
+        # Toplam departman
+        cursor.execute('SELECT COUNT(*) FROM departments')
+        total_depts = cursor.fetchone()[0]
+
+        # Toplam ders
+        cursor.execute('SELECT COUNT(*) FROM courses')
+        total_courses = cursor.fetchone()[0]
+
+        # Toplam öğrenci
+        cursor.execute('SELECT COUNT(*) FROM students')
+        total_students = cursor.fetchone()[0]
+
+        # İstatistik kartları
+        stats_data = [
+            ('Toplam Kullanıcı', str(total_users), '#4CAF50'),
+            ('Toplam Departman', str(total_depts), '#2196F3'),
+            ('Toplam Ders', str(total_courses), '#FF9800'),
+            ('Toplam Öğrenci', str(total_students), '#9C27B0')
+        ]
+
+        for idx, (label, value, color) in enumerate(stats_data):
+            stat_card = QLabel(f'<b>{label}</b><br><font size="5">{value}</font>')
+            stat_card.setStyleSheet(
+                f"background-color: {color}; color: white; padding: 15px; "
+                f"border-radius: 8px; text-align: center; font-weight: bold;"
+            )
+            stat_card.setAlignment(Qt.AlignCenter)
+            stat_card.setMinimumHeight(80)
+            stats_layout.addWidget(stat_card, idx // 2, idx % 2)
+
+        stats_group.setLayout(stats_layout)
+        layout.addWidget(stats_group)
+
+        # Alt Boşluk
+        layout.addStretch()
         widget.setLayout(layout)
         return widget
 
-    def add_user(self):
-        email, ok = QInputDialog.getText(self, 'Yeni Kullanıcı', 'E-posta:')
-        if not ok: return
-        password, ok = QInputDialog.getText(self, 'Yeni Kullanıcı', 'Şifre:')
-        if not ok: return
-        role = 'Bölüm Koordinatörü'
+    def load_users_table(self):
+        """Kullanıcı tablosunu yükle"""
         cursor = self.db.conn.cursor()
-        cursor.execute('SELECT id, name FROM departments')
-        deps = cursor.fetchall()
-        dep_names = [d[1] for d in deps]
-        dep_name, ok = QInputDialog.getItem(self, 'Bölüm Seç', 'Bölüm:', dep_names, 0, False)
-        if not ok: return
-        dep_id = next(d[0] for d in deps if d[1] == dep_name)
+        cursor.execute('''
+            SELECT u.id, u.email, u.role, d.name 
+            FROM users u
+            LEFT JOIN departments d ON u.department_id = d.id
+            ORDER BY u.id
+        ''')
+
+        users = cursor.fetchall()
+        self.users_table.setRowCount(len(users))
+
+        for i, (user_id, email, role, dept_name) in enumerate(users):
+            # ID
+            self.users_table.setItem(i, 0, QTableWidgetItem(str(user_id)))
+
+            # E-posta
+            self.users_table.setItem(i, 1, QTableWidgetItem(email))
+
+            # Rol (renkli)
+            role_item = QTableWidgetItem(role)
+            if role == 'Admin':
+                role_item.setBackground(QColor('#FFCDD2'))
+            elif role == 'Bölüm Koordinatörü':
+                role_item.setBackground(QColor('#C8E6C9'))
+            self.users_table.setItem(i, 2, role_item)
+
+            # Bölüm
+            self.users_table.setItem(i, 3, QTableWidgetItem(dept_name or 'N/A'))
+
+            # İşlemler Butonu
+            delete_btn = QPushButton('🗑️ Sil')
+            delete_btn.setStyleSheet("background-color: #f44336; color: white; padding: 5px;")
+            delete_btn.clicked.connect(lambda checked, uid=user_id: self.delete_user(uid))
+            self.users_table.setCellWidget(i, 4, delete_btn)
+
+    def view_users(self):
+        """Kullanıcı tablosunu yenile"""
+        self.load_users_table()
+        QMessageBox.information(self, 'Başarılı', 'Kullanıcı listesi güncellendi.')
+
+    def add_user(self):
+        """Yeni kullanıcı ekle - Dialog Tabanlı"""
+        # E-posta girişi
+        email, ok = QInputDialog.getText(
+            self, 'Yeni Kullanıcı',
+            'E-posta adresini girin:',
+            text='example@university.edu'
+        )
+        if not ok or not email:
+            return
+
+        # E-posta validasyonu
+        if '@' not in email:
+            QMessageBox.warning(self, 'Hata', 'Geçerli bir e-posta adresi girin.')
+            return
+
+        # Şifre girişi
+        password, ok = QInputDialog.getText(
+            self, 'Yeni Kullanıcı',
+            'Şifre belirleyin:',
+            text='password123'
+        )
+        if not ok or not password:
+            return
+
+        if len(password) < 6:
+            QMessageBox.warning(self, 'Hata', 'Şifre en az 6 karakter olmalıdır.')
+            return
+
+        # Rol seçimi
+        roles = ['Bölüm Koordinatörü', 'Admin']
+        role, ok = QInputDialog.getItem(
+            self, 'Rol Seçimi',
+            'Kullanıcı rolünü seçin:',
+            roles, 0, False
+        )
+        if not ok:
+            return
+
+        # Bölüm seçimi (Admin değilse)
+        cursor = self.db.conn.cursor()
+
+        if role == 'Bölüm Koordinatörü':
+            cursor.execute('SELECT id, name FROM departments ORDER BY name')
+            deps = cursor.fetchall()
+
+            if not deps:
+                QMessageBox.warning(self, 'Hata', 'Sistemde departman bulunmamaktadır.')
+                return
+
+            dep_names = [d[1] for d in deps]
+            dep_name, ok = QInputDialog.getItem(
+                self, 'Bölüm Seçimi',
+                'Kullanıcının bölümünü seçin:',
+                dep_names, 0, False
+            )
+            if not ok:
+                return
+
+            dep_id = next(d[0] for d in deps if d[1] == dep_name)
+        else:
+            dep_id = None  # Admin için departman gerekli değil
+
+        # Veritabanına ekle
         try:
-            cursor.execute('INSERT INTO users (email, password, role, department_id) VALUES (?, ?, ?, ?)',
-                           (email, password, role, dep_id))
+            cursor.execute(
+                'INSERT INTO users (email, password, role, department_id) VALUES (?, ?, ?, ?)',
+                (email, password, role, dep_id)
+            )
             self.db.conn.commit()
-            QMessageBox.information(self, 'Başarılı', 'Kullanıcı eklendi')
-        except:
-            QMessageBox.warning(self, 'Hata', 'E-posta zaten kayıtlı')
+
+            QMessageBox.information(
+                self, 'Başarılı',
+                f'Kullanıcı başarıyla eklendi.\n\n'
+                f'E-posta: {email}\n'
+                f'Rol: {role}'
+            )
+
+            # Tabloyu yenile
+            self.load_users_table()
+
+        except Exception as e:
+            if 'UNIQUE constraint failed' in str(e):
+                QMessageBox.warning(self, 'Hata', 'Bu e-posta adresi zaten kayıtlıdır.')
+            else:
+                QMessageBox.warning(self, 'Hata', f'Kullanıcı eklenemedi:\n{str(e)}')
+
+    def delete_user(self, user_id):
+        """Kullanıcı sil"""
+        # Kendi kendini silemesin
+        if user_id == self.user['id']:
+            QMessageBox.warning(self, 'Hata', 'Kendi hesabınızı silemezsiniz.')
+            return
+
+        # Onay al
+        reply = QMessageBox.question(
+            self, 'Silme Onayı',
+            f'ID={user_id} olan kullanıcıyı silmek istediğinizden emin misiniz?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute('DELETE FROM users WHERE id = ?', (user_id,))
+            self.db.conn.commit()
+
+            QMessageBox.information(self, 'Başarılı', 'Kullanıcı silindi.')
+            self.load_users_table()
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Kullanıcı silinemedi:\n{str(e)}')
 
     def classroom_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # Yetki kontrolü
-        if self.user['role'] != 'Bölüm Koordinatörü':
+        # Yetki kontrolü - Admin ve Bölüm Koordinatörü
+        if self.user['role'] not in ['Admin', 'Bölüm Koordinatörü']:
             label = QLabel('Bu sayfayı görüntüleme yetkiniz yok.')
             label.setStyleSheet("color: red; font-size: 12pt; padding: 20px;")
             label.setAlignment(Qt.AlignCenter)
             layout.addWidget(label)
             widget.setLayout(layout)
             return widget
+
+        # Başlık
+        title = QLabel('Derslik Yönetimi')
+        title.setStyleSheet("font-size: 14pt; font-weight: bold; padding: 10px; background-color: #E3F2FD;")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
 
         # Form grubu
         form_group = QGroupBox('Derslik Ekle/Düzenle')
@@ -345,33 +626,44 @@ class MainWindow(QMainWindow):
 
         form_layout.addWidget(QLabel('Sıra Yapısı:'), 5, 0)
         self.class_seat_group = QComboBox()
-        self.class_seat_group.addItems(['2', '3' , '4'])
+        self.class_seat_group.addItems(['2', '3', '4'])
         form_layout.addWidget(self.class_seat_group, 5, 1)
+
+        # Departman seçimi (Admin için)
+        if self.user['role'] == 'Admin':
+            form_layout.addWidget(QLabel('Departman ID:'), 6, 0)
+            self.class_department = QLineEdit()
+            self.class_department.setPlaceholderText('Departman ID')
+            self.class_department.setText('1')
+            form_layout.addWidget(self.class_department, 6, 1)
+            button_row = 7
+        else:
+            button_row = 6
 
         # Butonlar
         button_layout = QHBoxLayout()
 
-        add_btn = QPushButton('Ekle')
+        add_btn = QPushButton('➕ Ekle')
         add_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; font-weight: bold;")
         add_btn.clicked.connect(self.add_classroom)
         button_layout.addWidget(add_btn)
 
-        edit_btn = QPushButton('Düzenle')
+        edit_btn = QPushButton('✏️ Düzenle')
         edit_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; font-weight: bold;")
         edit_btn.clicked.connect(self.edit_classroom)
         button_layout.addWidget(edit_btn)
 
-        delete_btn = QPushButton('Sil')
+        delete_btn = QPushButton('🗑️ Sil')
         delete_btn.setStyleSheet("background-color: #f44336; color: white; padding: 8px; font-weight: bold;")
         delete_btn.clicked.connect(self.delete_classroom)
         button_layout.addWidget(delete_btn)
 
-        clear_btn = QPushButton('Temizle')
+        clear_btn = QPushButton('🔄 Temizle')
         clear_btn.setStyleSheet("background-color: #9E9E9E; color: white; padding: 8px; font-weight: bold;")
         clear_btn.clicked.connect(self.clear_class_form)
         button_layout.addWidget(clear_btn)
 
-        form_layout.addLayout(button_layout, 6, 0, 1, 2)
+        form_layout.addLayout(button_layout, button_row, 0, 1, 2)
         form_group.setLayout(form_layout)
         layout.addWidget(form_group)
 
@@ -384,7 +676,7 @@ class MainWindow(QMainWindow):
         self.search_class_id.setPlaceholderText('ID ile arama yapın')
         search_layout.addWidget(self.search_class_id)
 
-        search_btn = QPushButton('Ara ve Görselleştir')
+        search_btn = QPushButton('🔍 Ara ve Görselleştir')
         search_btn.setStyleSheet("background-color: #FF9800; color: white; padding: 8px; font-weight: bold;")
         search_btn.clicked.connect(self.search_classroom)
         search_layout.addWidget(search_btn)
@@ -397,8 +689,9 @@ class MainWindow(QMainWindow):
         table_layout = QVBoxLayout()
 
         self.classroom_table = QTableWidget()
-        self.classroom_table.setColumnCount(7)
-        self.classroom_table.setHorizontalHeaderLabels(['ID', 'Kod', 'Ad', 'Kapasite', 'Satır', 'Sütun', 'Yapı'])
+        self.classroom_table.setColumnCount(8)
+        self.classroom_table.setHorizontalHeaderLabels(
+            ['ID', 'Kod', 'Ad', 'Kapasite', 'Satır', 'Sütun', 'Yapı', 'Departman'])
         self.classroom_table.horizontalHeader().setStretchLastSection(True)
         self.classroom_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.classroom_table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -409,7 +702,7 @@ class MainWindow(QMainWindow):
         table_group.setLayout(table_layout)
         layout.addWidget(table_group)
 
-        # Görselleştirme bölümü (açılır/kapanır)
+        # Görselleştirme bölümü
         self.classroom_view_toggle = QPushButton('▼ Oturma Düzeni Görselleştirmesi')
         self.classroom_view_toggle.setStyleSheet(
             "QPushButton { text-align: left; padding: 8px; background-color: #E3F2FD; border: 1px solid #2196F3; }"
@@ -419,7 +712,6 @@ class MainWindow(QMainWindow):
         self.classroom_view_toggle.setVisible(False)
         layout.addWidget(self.classroom_view_toggle)
 
-        # Görselleştirme alanı
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setMaximumHeight(400)
@@ -448,22 +740,34 @@ class MainWindow(QMainWindow):
             self.classroom_view_toggle.setText('▲ Oturma Düzeni Görselleştirmesi')
 
     def load_classrooms(self):
-        cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id']
-        cursor.execute(
-            'SELECT id, code, name, capacity, rows, columns, seat_group FROM classrooms WHERE department_id=? ORDER BY code',
-            (dep_id,)
-        )
-        classrooms = cursor.fetchall()
+        try:
+            cursor = self.db.conn.cursor()
 
-        self.classroom_table.setRowCount(len(classrooms))
+            # Admin: tüm derslikleri, Bölüm Koor: sadece kendi departmanı
+            if self.user['role'] == 'Admin':
+                cursor.execute(
+                    'SELECT id, code, name, capacity, rows, columns, seat_group, department_id FROM classrooms ORDER BY code'
+                )
+            else:
+                dep_id = self.user['department_id']
+                cursor.execute(
+                    'SELECT id, code, name, capacity, rows, columns, seat_group, department_id FROM classrooms WHERE department_id=? ORDER BY code',
+                    (dep_id,)
+                )
 
-        for i, row in enumerate(classrooms):
-            for j, val in enumerate(row):
-                item = QTableWidgetItem(str(val))
-                if j == 0:  # ID sütunu
-                    item.setForeground(QColor('#2196F3'))
-                self.classroom_table.setItem(i, j, item)
+            classrooms = cursor.fetchall()
+
+            self.classroom_table.setRowCount(len(classrooms))
+
+            for i, row in enumerate(classrooms):
+                for j, val in enumerate(row):
+                    item = QTableWidgetItem(str(val))
+                    if j == 0:
+                        item.setForeground(QColor('#2196F3'))
+                    self.classroom_table.setItem(i, j, item)
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Derslikler yüklenirken hata: {str(e)}')
 
     def add_classroom(self):
         self.modify_classroom('add')
@@ -479,7 +783,6 @@ class MainWindow(QMainWindow):
         columns = self.class_columns.text().strip()
         seat_group = self.class_seat_group.currentText()
 
-        # Validasyon
         if not all([code, name, capacity, rows, columns]):
             QMessageBox.warning(self, 'Eksik Bilgi', 'Lütfen tüm alanları doldurun.')
             return
@@ -497,11 +800,20 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Hata', 'Kapasite, satır ve sütun pozitif tam sayı olmalıdır.')
             return
 
-        cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id']
+        try:
+            cursor = self.db.conn.cursor()
 
-        if mode == 'add':
-            try:
+            # Departman ID'sini belirle
+            if self.user['role'] == 'Admin':
+                try:
+                    dep_id = int(self.class_department.text().strip())
+                except ValueError:
+                    QMessageBox.warning(self, 'Hata', 'Geçerli bir Departman ID girin.')
+                    return
+            else:
+                dep_id = self.user['department_id']
+
+            if mode == 'add':
                 cursor.execute(
                     'INSERT INTO classrooms (department_id, code, name, capacity, rows, columns, seat_group) VALUES (?, ?, ?, ?, ?, ?, ?)',
                     (dep_id, code, name, capacity, rows, columns, seat_group)
@@ -510,18 +822,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, 'Başarılı', f'Derslik "{code}" başarıyla eklendi.')
                 self.clear_class_form()
 
-            except Exception as e:
-                QMessageBox.warning(self, 'Hata', f'Derslik eklenemedi.\nDerslik kodu benzersiz olmalıdır.\n\n{str(e)}')
-                return
+            elif mode == 'edit':
+                class_id = self.search_class_id.text().strip()
+                if not class_id:
+                    QMessageBox.warning(self, 'Hata',
+                                        'Düzenlemek için önce tablodan bir derslik seçin veya ID ile arama yapın.')
+                    return
 
-        elif mode == 'edit':
-            class_id = self.search_class_id.text().strip()
-            if not class_id:
-                QMessageBox.warning(self, 'Hata',
-                                    'Düzenlemek için önce tablodan bir derslik seçin veya ID ile arama yapın.')
-                return
-
-            try:
                 cursor.execute(
                     'UPDATE classrooms SET code=?, name=?, capacity=?, rows=?, columns=?, seat_group=? WHERE id=? AND department_id=?',
                     (code, name, capacity, rows, columns, seat_group, class_id, dep_id)
@@ -534,12 +841,14 @@ class MainWindow(QMainWindow):
                 else:
                     QMessageBox.warning(self, 'Hata', 'Güncellenecek derslik bulunamadı.')
 
-            except Exception as e:
-                QMessageBox.warning(self, 'Hata', f'Derslik güncellenemedi.\n\n{str(e)}')
-                return
+            # Tabloyu güncelle
+            self.load_classrooms()
 
-        self.load_classrooms()
-        self.refresh_tabs()
+
+
+        except Exception as e:
+            self.db.conn.rollback()  # Hata durumunda rollback
+            QMessageBox.critical(self, 'Hata', f'İşlem sırasında hata oluştu:\n{str(e)}')
 
     def delete_classroom(self):
         class_id = self.search_class_id.text().strip()
@@ -548,7 +857,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Hata', 'Silmek için önce tablodan bir derslik seçin veya ID ile arama yapın.')
             return
 
-        # Onay al
         reply = QMessageBox.question(
             self, 'Silme Onayı',
             f'ID={class_id} olan derslik silinecek. Emin misiniz?',
@@ -558,24 +866,34 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.No:
             return
 
-        cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id']
+        try:
+            cursor = self.db.conn.cursor()
 
-        cursor.execute('DELETE FROM classrooms WHERE id=? AND department_id=?', (class_id, dep_id))
-        self.db.conn.commit()
+            # Departman kontrol
+            if self.user['role'] == 'Admin':
+                cursor.execute('DELETE FROM classrooms WHERE id=?', (class_id,))
+            else:
+                dep_id = self.user['department_id']
+                cursor.execute('DELETE FROM classrooms WHERE id=? AND department_id=?', (class_id, dep_id))
 
-        if cursor.rowcount > 0:
-            QMessageBox.information(self, 'Başarılı', 'Derslik silindi.')
-            self.clear_class_form()
-            self.load_classrooms()
-            self.refresh_tabs()
-        else:
-            QMessageBox.warning(self, 'Hata', 'Silinecek derslik bulunamadı.')
+            self.db.conn.commit()
+
+            if cursor.rowcount > 0:
+                QMessageBox.information(self, 'Başarılı', 'Derslik silindi.')
+                self.clear_class_form()
+                self.load_classrooms()
+
+        except Exception as e:
+            self.db.conn.rollback()
+            QMessageBox.critical(self, 'Hata', f'Silme işlemi sırasında hata:\n{str(e)}')
 
     def load_classroom_for_edit(self, row, col):
-        class_id = self.classroom_table.item(row, 0).text()
-        self.search_class_id.setText(class_id)
-        self.search_classroom()
+        try:
+            class_id = self.classroom_table.item(row, 0).text()
+            self.search_class_id.setText(class_id)
+            self.search_classroom()
+        except Exception as e:
+            QMessageBox.warning(self, 'Hata', f'Derslik yüklenirken hata: {str(e)}')
 
     def search_classroom(self):
         class_id = self.search_class_id.text().strip()
@@ -584,168 +902,235 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Uyarı', 'Lütfen arama yapmak için bir ID girin.')
             return
 
-        cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id']
-        cursor.execute(
-            'SELECT code, name, capacity, rows, columns, seat_group FROM classrooms WHERE id=? AND department_id=?',
-            (class_id, dep_id)
-        )
-        classroom = cursor.fetchone()
+        try:
+            cursor = self.db.conn.cursor()
 
-        if classroom:
-            code, name, capacity, rows, columns, seat_group = classroom
+            if self.user['role'] == 'Admin':
+                cursor.execute(
+                    'SELECT code, name, capacity, rows, columns, seat_group, department_id FROM classrooms WHERE id=?',
+                    (class_id,)
+                )
+            else:
+                dep_id = self.user['department_id']
+                cursor.execute(
+                    'SELECT code, name, capacity, rows, columns, seat_group, department_id FROM classrooms WHERE id=? AND department_id=?',
+                    (class_id, dep_id)
+                )
 
-            # Form alanlarını doldur
-            self.class_code.setText(code)
-            self.class_name.setText(name)
-            self.class_capacity.setText(str(capacity))
-            self.class_rows.setText(str(rows))
-            self.class_columns.setText(str(columns))
-            self.class_seat_group.setCurrentText(str(seat_group))
+            classroom = cursor.fetchone()
 
-            # Görselleştirmeyi oluştur
-            self.visualize_classroom(code, name, rows, columns, seat_group)
+            if classroom:
+                code, name, capacity, rows, columns, seat_group, dept_id = classroom
 
-        else:
-            QMessageBox.warning(self, 'Hata', f'ID={class_id} olan derslik bulunamadı.')
+                self.class_code.setText(code)
+                self.class_name.setText(name)
+                self.class_capacity.setText(str(capacity))
+                self.class_rows.setText(str(rows))
+                self.class_columns.setText(str(columns))
+                self.class_seat_group.setCurrentText(str(seat_group))
+
+                # Admin ise departman ID'sini de göster
+                if self.user['role'] == 'Admin':
+                    self.class_department.setText(str(dept_id))
+
+                self.visualize_classroom(code, name, rows, columns, seat_group)
+
+            else:
+                QMessageBox.warning(self, 'Hata', f'ID={class_id} olan derslik bulunamadı.')
+
+        except Exception as e:
+            QMessageBox.critical(self, 'Hata', f'Arama sırasında hata:\n{str(e)}')
 
     def visualize_classroom(self, code, name, rows, columns, seat_group):
-        # Önce mevcut görselleştirmeyi temizle
-        self.clear_view(self.classroom_view)
+        try:
+            self.clear_view(self.classroom_view)
 
-        # Başlık ekle
-        title_label = QLabel(f'<b>{code} - {name}</b><br>Satır: {rows} | Sütun: {columns} | Yapı: {seat_group}\'erli')
-        title_label.setStyleSheet("background-color: #E3F2FD; padding: 10px; border-radius: 5px; font-size: 11pt;")
-        title_label.setAlignment(Qt.AlignCenter)
-        self.classroom_view.addWidget(title_label, 0, 0, 1, columns)
+            # Toplam sütun sayısı hesapla: her grup seat_group koltuk + gruplar arası spacer (columns-1 kadar)
+            total_cols = columns * seat_group + max(0, columns - 1)
 
-        # Oturma düzenini çiz
-        for r in range(rows):
-            for c in range(columns):
-                # Grup ayırıcı boşluk (2'li veya 3'lü yapı için)
-                if seat_group == 2 and c % 2 == 0 and c > 0:
-                    spacer = QLabel()
-                    spacer.setFixedWidth(10)
-                    self.classroom_view.addWidget(spacer, r + 1, c)
-                elif seat_group == 3 and c % 3 == 0 and c > 0:
-                    spacer = QLabel()
-                    spacer.setFixedWidth(10)
-                    self.classroom_view.addWidget(spacer, r + 1, c)
+            title_label = QLabel(f'<b>{code} - {name}</b><br>Satır: {rows} | Sütun: {columns} | Yapı: {seat_group}\'li')
+            title_label.setStyleSheet("background-color: #E3F2FD; padding: 10px; border-radius: 5px; font-size: 11pt;")
+            title_label.setAlignment(Qt.AlignCenter)
+            self.classroom_view.addWidget(title_label, 0, 0, 1, total_cols)
 
-                # Koltuk butonu
-                seat_label = f'{r + 1}-{c + 1}'
-                btn = QPushButton(seat_label)
-                btn.setStyleSheet(
-                    "QPushButton { background-color: #90CAF9; color: #0D47A1; border: 2px solid #2196F3; "
-                    "border-radius: 4px; font-weight: bold; }"
-                    "QPushButton:hover { background-color: #64B5F6; }"
-                )
-                btn.setFixedSize(60, 35)
-                btn.setToolTip(f'Sıra {r + 1}, Sütun {c + 1}')
-                self.classroom_view.addWidget(btn, r + 1, c)
+            for r in range(rows):
+                col_idx = 0
+                for c in range(columns):
+                    if c > 0:
+                        spacer = QLabel()
+                        spacer.setFixedWidth(20)
+                        self.classroom_view.addWidget(spacer, r + 1, col_idx)
+                        col_idx += 1
 
-        # Görselleştirme alanını göster
-        self.classroom_view_toggle.setVisible(True)
-        self.classroom_view_toggle.setText('▼ Oturma Düzeni Görselleştirmesi')
-        self.classroom_view_scroll.setVisible(True)
+                    for s in range(seat_group):
+                        # Numaralandırma: her satırda sıralı koltuk numarası (1'den başlayarak)
+                        seat_num = c * seat_group + s + 1
+                        seat_label = f'{r + 1}-{seat_num}'
+                        btn = QPushButton(seat_label)
+                        btn.setStyleSheet(
+                            "QPushButton { background-color: #90CAF9; color: #0D47A1; border: 2px solid #2196F3; "
+                            "border-radius: 4px; font-weight: bold; }"
+                            "QPushButton:hover { background-color: #64B5F6; }"
+                        )
+                        btn.setFixedSize(60, 35)
+                        btn.setToolTip(f'Sıra {r + 1}, Grup {c + 1}, Koltuk {s + 1}')
+                        self.classroom_view.addWidget(btn, r + 1, col_idx)
+                        col_idx += 1
+
+            self.classroom_view_toggle.setVisible(True)
+            self.classroom_view_toggle.setText('▼ Oturma Düzeni Görselleştirmesi')
+            self.classroom_view_scroll.setVisible(True)
+
+        except Exception as e:
+            QMessageBox.warning(self, 'Hata', f'Görselleştirme hatası: {str(e)}')
 
     def clear_class_form(self):
-        self.class_code.clear()
-        self.class_name.clear()
-        self.class_capacity.clear()
-        self.class_rows.clear()
-        self.class_columns.clear()
-        self.class_seat_group.setCurrentIndex(0)
-        self.search_class_id.clear()
-        self.clear_view(self.classroom_view)
-        self.classroom_view_toggle.setVisible(False)
-        self.classroom_view_scroll.setVisible(False)
+        try:
+            self.class_code.clear()
+            self.class_name.clear()
+            self.class_capacity.clear()
+            self.class_rows.clear()
+            self.class_columns.clear()
+            self.class_seat_group.setCurrentIndex(0)
+            self.search_class_id.clear()
+
+            if self.user['role'] == 'Admin' and hasattr(self, 'class_department'):
+                self.class_department.setText('1')
+
+            self.clear_view(self.classroom_view)
+            self.classroom_view_toggle.setVisible(False)
+            self.classroom_view_scroll.setVisible(False)
+
+        except Exception as e:
+            print(f"Form temizleme hatası: {str(e)}")
 
     def clear_view(self, view_layout):
-        while view_layout.count():
-            item = view_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        try:
+            while view_layout.count():
+                item = view_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+        except Exception as e:
+            print(f"View temizleme hatası: {str(e)}")
+
+
 
     def course_upload_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
-        upload_btn = QPushButton('Excel Yükle')
+
+        # Başlık
+        title = QLabel('Ders Listesi Yükleme')
+        title.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 10px; background-color: #E3F2FD;")
+        layout.addWidget(title)
+
+        # Yetki kontrolü
+        if self.user['role'] not in ['Admin', 'Bölüm Koordinatörü']:
+            label = QLabel('Bu işlemi yapma yetkiniz yok.')
+            label.setStyleSheet("color: red; font-size: 11pt; padding: 20px;")
+            label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(label)
+            widget.setLayout(layout)
+            return widget
+
+        upload_btn = QPushButton('📁 Excel Yükle')
+        upload_btn.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; font-weight: bold;")
         upload_btn.clicked.connect(self.upload_courses)
         layout.addWidget(upload_btn)
+
         self.course_status = QLabel('Dersler yüklenmedi.')
         self.course_status.setStyleSheet("color: #333;")
         layout.addWidget(self.course_status)
-        layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+        layout.addStretch()
         widget.setLayout(layout)
         return widget
 
     def upload_courses(self):
+        # Yetki kontrolü
+        if self.user['role'] not in ['Admin', 'Bölüm Koordinatörü']:
+            QMessageBox.warning(self, 'Yetkisiz Erişim', 'Bu işlemi yapma yetkiniz yok.')
+            return
+
         file, _ = QFileDialog.getOpenFileName(self, 'Excel Seç', '', 'Excel Files (*.xlsx *.xls)')
         if not file:
             return
 
         try:
-            # Başlık satırlarını güvenli almak için header=None kullanıyoruz
             df = pd.read_excel(file, header=None)
             cursor = self.db.conn.cursor()
-            dep_id = self.user['department_id'] if self.user['role'] == 'Bölüm Koordinatörü' else 1
+
+            # Admin: departman seçimi yapabilir, Bölüm Koordinatörü: kendi departmanı
+            if self.user['role'] == 'Admin':
+                # Admin için departman seçim dialogu
+                dep_id, ok = QInputDialog.getInt(
+                    self, 'Departman Seçimi',
+                    'Departman ID girin:',
+                    value=1, min=1, max=999
+                )
+                if not ok:
+                    return
+            else:
+                dep_id = self.user['department_id']
 
             errors = []
             current_year = None
             current_type = 'Zorunlu'
             inserted_courses = 0
-            skipped_courses = 0
+            updated_courses = 0
 
             for idx, row in df.iterrows():
-                # Hücreleri string olarak birleştir (NaN’ları temizle)
                 joined = " ".join(str(x).strip() for x in row if pd.notna(x))
 
                 if not joined:
-                    continue  # Boş satır
+                    continue
 
                 upper_text = joined.upper()
 
-                # 🔹 Sınıf başlığı algılama
+                # Sınıf başlığı algılama
                 if "SINIF" in upper_text and any(ch.isdigit() for ch in upper_text):
-                    for i in range(1, 7):  # 1–6 arası sınıf olabilir
+                    for i in range(1, 7):
                         if f"{i}" in upper_text:
                             current_year = i
                             current_type = 'Zorunlu'
                             break
-                    continue  # Bu satır başlık, ekleme yapılmaz
+                    continue
 
-                # 🔹 Seçmeli başlık algılama
+                # Seçmeli başlık algılama
                 if "SEÇMELİ" in upper_text or "SEÇİMLİK" in upper_text:
                     current_type = "Seçmeli"
-                    continue  # Bu da başlık, ekleme yapılmaz
+                    continue
 
-                # 🔹 DERS KODU, DERSİN ADI gibi sahte başlık satırlarını atla
+                # Sahte başlık satırlarını atla
                 if "DERS" in upper_text and ("KOD" in upper_text or "ADI" in upper_text):
                     continue
 
-                # 🔹 Gerçek ders satırı (3 hücre olmalı: kod, ad, öğretim elemanı)
+                # Gerçek ders satırı
                 ders_kodu = str(row[0]).strip() if pd.notna(row[0]) else ""
                 ders_adi = str(row[1]).strip() if pd.notna(row[1]) else ""
                 instructor = str(row[2]).strip() if len(row) > 2 and pd.notna(row[2]) else ""
 
                 if not ders_kodu or not ders_adi:
-                    continue  # Geçersiz satır
+                    continue
 
                 year = current_year if current_year else 1
                 course_type = current_type
 
-                # 🔹 Aynı kod varsa güncelle
-                cursor.execute('SELECT id FROM courses WHERE code = ? AND department_id = ?', (ders_kodu, dep_id))
+                # Aynı kod varsa güncelle
+                cursor.execute(
+                    'SELECT id FROM courses WHERE code = ? AND department_id = ?',
+                    (ders_kodu, dep_id)
+                )
                 existing = cursor.fetchone()
+
                 if existing:
                     cursor.execute('''
                         UPDATE courses
                         SET name = ?, instructor = ?, year = ?, type = ?
                         WHERE code = ? AND department_id = ?
                     ''', (ders_adi, instructor, year, course_type, ders_kodu, dep_id))
-                    skipped_courses += 1
+                    updated_courses += 1
                 else:
                     cursor.execute('''
                         INSERT INTO courses (department_id, code, name, instructor, year, type)
@@ -756,55 +1141,54 @@ class MainWindow(QMainWindow):
             self.db.conn.commit()
 
             result_msg = f'{inserted_courses} yeni ders eklendi'
-            if skipped_courses > 0:
-                result_msg += f', {skipped_courses} ders güncellendi'
+            if updated_courses > 0:
+                result_msg += f', {updated_courses} ders güncellendi'
 
             if errors:
                 error_msg = '\n'.join(errors[:10])
                 if len(errors) > 10:
-                    error_msg += f'\n... ve {len(errors) - 10} hata daha var'
+                    error_msg += f'\n... ve {len(errors) - 10} hata daha'
                 QMessageBox.warning(self, 'Tamamlandı (Hatalarla)', f'{result_msg}\n\nHatalar:\n{error_msg}')
             else:
                 QMessageBox.information(self, 'Başarılı', f'✓ {result_msg}')
 
             self.course_status.setText(result_msg)
-            self.refresh_tabs()
+
 
         except Exception as e:
             QMessageBox.critical(self, 'Hata', f'Excel okunamadı:\n{e}')
             self.course_status.setText('Ders yükleme başarısız.')
 
-    def student_upload_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-        self.course_select = QComboBox()
-        self.load_course_options()
-        layout.addWidget(QLabel('Ders Seç'))
-        layout.addWidget(self.course_select)
-        upload_btn = QPushButton('Excel Yükle')
-        upload_btn.clicked.connect(self.upload_students)
-        layout.addWidget(upload_btn)
-        self.student_status = QLabel('Öğrenciler yüklenmedi.')
-        self.student_status.setStyleSheet("color: #333;")
-        layout.addWidget(self.student_status)
-        layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
-        widget.setLayout(layout)
-        return widget
+        if hasattr(self, 'course_table'):
+            self.load_courses()
 
-    def load_course_options(self):
-        self.course_select.clear()
-        cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id'] if self.user['role'] == 'Bölüm Koordinatörü' else '%'
-        cursor.execute('SELECT code, name FROM courses WHERE department_id LIKE ?', (dep_id,))
-        courses = cursor.fetchall()
-        self.course_select.addItems([f"{code} - {name}" for code, name in courses])
-        self.course_select.setEnabled(bool(courses))
+            # Ders seçim tablosunu da yenile (sınav programı sekmesinde)
+        if hasattr(self, 'course_include_table'):
+            self.load_courses_for_schedule()
+
+
+
 
     def student_upload_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        upload_btn = QPushButton('Excel Yükle')
+        # Başlık
+        title = QLabel('Öğrenci Listesi Yükleme')
+        title.setStyleSheet("font-size: 12pt; font-weight: bold; padding: 10px; background-color: #E8F5E9;")
+        layout.addWidget(title)
+
+        # Yetki kontrolü
+        if self.user['role'] not in ['Admin', 'Bölüm Koordinatörü']:
+            label = QLabel('Bu işlemi yapma yetkiniz yok.')
+            label.setStyleSheet("color: red; font-size: 11pt; padding: 20px;")
+            label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(label)
+            widget.setLayout(layout)
+            return widget
+
+        upload_btn = QPushButton('📁 Excel Yükle')
+        upload_btn.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; font-weight: bold;")
         upload_btn.clicked.connect(self.upload_students)
         layout.addWidget(upload_btn)
 
@@ -818,40 +1202,51 @@ class MainWindow(QMainWindow):
 
     def upload_students(self):
         # Yetki kontrolü
-        if self.user['role'] != 'Bölüm Koordinatörü':
-            QMessageBox.warning(self, 'Yetkisiz Erişim', 'Bu işlemi yalnızca Bölüm Koordinatörü yapabilir.')
+        if self.user['role'] not in ['Admin', 'Bölüm Koordinatörü']:
+            QMessageBox.warning(self, 'Yetkisiz Erişim', 'Bu işlemi yapma yetkiniz yok.')
             return
 
-        dep_id = self.user['department_id']
+        # Admin için departman seçimi, Bölüm Koordinatörü için otomatik
+        if self.user['role'] == 'Admin':
+            dep_id, ok = QInputDialog.getInt(
+                self, 'Departman Seçimi',
+                'Departman ID girin:',
+                value=1, min=1, max=999
+            )
+            if not ok:
+                return
+        else:
+            dep_id = self.user['department_id']
+
+        cursor = self.db.conn.cursor()
 
         # Ders kontrolü
-        if not self.db.has_courses(dep_id):
+        cursor.execute('SELECT COUNT(*) FROM courses WHERE department_id = ?', (dep_id,))
+        if cursor.fetchone()[0] == 0:
             QMessageBox.warning(self, 'Uyarı', 'Önce ders listesini yükleyin.')
             self.student_status.setText('Ders listesi yüklenmedi.')
             return
 
-        # ÖNCE MEVCUT ÖĞRENCİLERİ TEMİZLE
+        # Onay al
         reply = QMessageBox.question(
             self, 'Onay',
-            'Mevcut öğrenci listesi silinecek ve yeni liste yüklenecek. Devam edilsin mi?',
+            'Departmanın mevcut öğrenci listesi silinecek ve yeni liste yüklenecek.\n\nDevam edilsin mi?',
             QMessageBox.Yes | QMessageBox.No
         )
 
         if reply == QMessageBox.No:
             return
 
-        # Dosya seçimi
         file, _ = QFileDialog.getOpenFileName(self, 'Excel Seç', '', 'Excel Files (*.xlsx *.xls)')
         if not file:
             return
 
         try:
-            cursor = self.db.conn.cursor()
-
-            # Bölüme ait öğrencileri ve kayıtlarını sil
+            # Mevcut öğrencileri sil
             cursor.execute(
                 'DELETE FROM student_courses WHERE student_id IN (SELECT id FROM students WHERE department_id = ?)',
-                (dep_id,))
+                (dep_id,)
+            )
             cursor.execute('DELETE FROM students WHERE department_id = ?', (dep_id,))
             self.db.conn.commit()
 
@@ -874,8 +1269,6 @@ class MainWindow(QMainWindow):
             errors = []
             new_students = 0
             course_enrollments = 0
-
-            # Öğrenci verilerini grupla
             student_data = {}
 
             for idx, row in df.iterrows():
@@ -887,7 +1280,6 @@ class MainWindow(QMainWindow):
                     if not number or number == 'nan':
                         continue
 
-                    # Sınıf
                     try:
                         year_str = str(row['Sınıf']).strip()
                         year = int(year_str.split('.')[0])
@@ -957,7 +1349,6 @@ class MainWindow(QMainWindow):
 
             self.db.conn.commit()
 
-            # Sonuç
             success_msg = f'{new_students} öğrenci, {course_enrollments} ders kaydı eklendi'
 
             if errors:
@@ -969,12 +1360,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, 'Başarılı', f'✓ {success_msg}')
 
             self.student_status.setText(success_msg)
-            self.refresh_tabs()
 
         except Exception as e:
             self.db.conn.rollback()
             QMessageBox.critical(self, 'Hata', f'İşlem başarısız:\n{str(e)}')
             self.student_status.setText('Yükleme başarısız.')
+
+        if hasattr(self, 'course_table'):
+            self.load_courses()
+
 
     def student_list_tab(self):
         widget = QWidget()
@@ -993,20 +1387,19 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(search_layout)
 
-        # Açılır kapanır bölüm için buton
+        # Toggle buton
         self.student_info_toggle = QPushButton('▼ Öğrenci Bilgileri')
         self.student_info_toggle.setStyleSheet(
             "QPushButton { text-align: left; padding: 8px; background-color: #f0f0f0; border: 1px solid #ddd; }"
             "QPushButton:hover { background-color: #e0e0e0; }"
         )
         self.student_info_toggle.clicked.connect(self.toggle_student_info)
-        self.student_info_toggle.setVisible(False)  # Başlangıçta gizli
+        self.student_info_toggle.setVisible(False)
         layout.addWidget(self.student_info_toggle)
 
-        # Öğrenci bilgi alanı (scroll area içinde)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(250)  # Maksimum yükseklik
+        scroll.setMaximumHeight(250)
 
         self.student_info = QLabel('Aramak için öğrenci numarası girin.')
         self.student_info.setStyleSheet(
@@ -1017,7 +1410,7 @@ class MainWindow(QMainWindow):
         self.student_info.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         scroll.setWidget(self.student_info)
-        scroll.setVisible(False)  # Başlangıçta gizli
+        scroll.setVisible(False)
         self.student_info_scroll = scroll
         layout.addWidget(scroll)
 
@@ -1029,7 +1422,6 @@ class MainWindow(QMainWindow):
         is_visible = self.student_info_scroll.isVisible()
         self.student_info_scroll.setVisible(not is_visible)
 
-        # Buton ok işaretini değiştir
         if is_visible:
             self.student_info_toggle.setText('▼ Öğrenci Bilgileri')
         else:
@@ -1045,7 +1437,12 @@ class MainWindow(QMainWindow):
             return
 
         cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id'] if self.user['role'] == 'Bölüm Koordinatörü' else '%'
+
+        # Admin: tüm departmanları görebilir, Bölüm Koor: sadece kendi departmanını
+        if self.user['role'] == 'Admin':
+            dep_id = '%'
+        else:
+            dep_id = self.user['department_id']
 
         cursor.execute('''
             SELECT s.name, s.year FROM students s
@@ -1096,7 +1493,6 @@ class MainWindow(QMainWindow):
 
         self.student_info.setText(info_html)
 
-        # Bilgi alanını göster
         self.student_info_toggle.setVisible(True)
         self.student_info_toggle.setText('▼ Öğrenci Bilgileri')
         self.student_info_scroll.setVisible(True)
@@ -1105,7 +1501,6 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # Ders tablosu
         self.course_table = QTableWidget()
         self.course_table.setColumnCount(2)
         self.course_table.setHorizontalHeaderLabels(['Ders Kodu', 'Ders Adı'])
@@ -1117,7 +1512,6 @@ class MainWindow(QMainWindow):
         self.load_courses()
         layout.addWidget(self.course_table)
 
-        # Açılır kapanır bölüm için buton
         self.course_info_toggle = QPushButton('▼ Dersi Alan Öğrenciler')
         self.course_info_toggle.setStyleSheet(
             "QPushButton { text-align: left; padding: 8px; background-color: #f0f0f0; border: 1px solid #ddd; }"
@@ -1127,7 +1521,6 @@ class MainWindow(QMainWindow):
         self.course_info_toggle.setVisible(False)
         layout.addWidget(self.course_info_toggle)
 
-        # Öğrenci listesi alanı (scroll area içinde)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setMaximumHeight(250)
@@ -1159,7 +1552,12 @@ class MainWindow(QMainWindow):
 
     def load_courses(self):
         cursor = self.db.conn.cursor()
-        dep_id = self.user['department_id'] if self.user['role'] == 'Bölüm Koordinatörü' else '%'
+
+        # Admin: tüm dersler, Bölüm Koor: sadece kendi dersler
+        if self.user['role'] == 'Admin':
+            dep_id = '%'
+        else:
+            dep_id = self.user['department_id']
 
         cursor.execute(
             'SELECT code, name FROM courses WHERE department_id LIKE ? ORDER BY code',
@@ -1210,7 +1608,6 @@ class MainWindow(QMainWindow):
 
         self.course_students_info.setText(info_html)
 
-        # Bilgi alanını göster
         self.course_info_toggle.setVisible(True)
         self.course_info_toggle.setText('▼ Dersi Alan Öğrenciler')
         self.course_students_scroll.setVisible(True)
@@ -1229,14 +1626,6 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # Yetki kontrolü (opsiyonel)
-        if self.user['role'] != 'Bölüm Koordinatörü':
-            label = QLabel('Bu sayfayı görüntüleme yetkiniz yok.')
-            label.setStyleSheet("color: red; font-size: 12pt; padding: 20px;")
-            label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(label)
-            widget.setLayout(layout)
-            return widget
 
         # Başlık
         title = QLabel('Sınav Programı Oluşturma')
@@ -1606,6 +1995,8 @@ class MainWindow(QMainWindow):
 
             # Önce eski sınav kayıtlarını sil (aynı tür için)
             cursor.execute('DELETE FROM exams WHERE type=?', (exam_type,))
+            # Eski oturma planlarını sil
+            cursor.execute('DELETE FROM seating WHERE exam_id IN (SELECT id FROM exams WHERE type=?)', (exam_type,))
 
             # Tabloyu temizle ve programı göster
             self.schedule_table.setRowCount(0)
@@ -1633,6 +2024,10 @@ class MainWindow(QMainWindow):
                 )
 
             self.db.conn.commit()
+            # Oturma planı sekmesini yenile
+            self.seating_table.setRowCount(0)  # Tabloyu sıfırla
+            self.load_exams()
+            self.refresh_seating_tab()
 
             QMessageBox.information(
                 self, 'Başarılı',
@@ -1643,6 +2038,13 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, 'Hata', f'Program oluşturulurken hata oluştu:\n{str(e)}')
+
+    def refresh_seating_tab(self):
+        if hasattr(self, 'seating_table'):
+            self.seating_table.setRowCount(0)
+            self.clear_seating_view()
+            self.load_exams()
+
 
     def generate_schedule(self, courses, course_dict, course_student_count, classrooms,
                           student_courses, durations, dates, break_time, no_overlap):
@@ -1898,7 +2300,6 @@ class MainWindow(QMainWindow):
             # Dahil edilen dersleri al
             included_courses = []
             for i in range(self.course_include_table.rowCount()):
-                # LİSTEDEN CHECKBOX AL
                 if i < len(self.course_checkboxes) and self.course_checkboxes[i].isChecked():
                     included_courses.append(self.course_include_ids[i])
 
@@ -1982,7 +2383,6 @@ class MainWindow(QMainWindow):
                     error_msg += f'\n\n... ve {len(errors) - 15} hata daha'
                 QMessageBox.warning(self, 'Program Oluşturulamadı', f'Aşağıdaki hatalar oluştu:\n\n{error_msg}')
 
-                # Kısmi program varsa göster
                 if not schedule:
                     return
 
@@ -1990,8 +2390,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, 'Hata', 'Program oluşturulamadı!\nKısıtları gevşetmeyi deneyin.')
                 return
 
-            # Önce eski sınav kayıtlarını sil (aynı tür için)
+            # ÖNCESİ: Eski sınav kayıtlarını sil (aynı tür için)
             cursor.execute('DELETE FROM exams WHERE type=?', (exam_type,))
+
+            # YENİ: Tüm oturma planlarını sil
+            self.clear_all_seating_plans()
 
             # Tabloyu temizle ve programı göster
             self.schedule_table.setRowCount(0)
@@ -2032,11 +2435,11 @@ class MainWindow(QMainWindow):
 
                 classroom_item = QTableWidgetItem(classroom_text)
                 if len(items) > 1:
-                    classroom_item.setBackground(QColor('#FFF9C4'))  # Sarı arka plan
+                    classroom_item.setBackground(QColor('#FFF9C4'))
                     classroom_item.setToolTip(f"Bu sınav {len(items)} farklı derslikte yapılacak")
                 self.schedule_table.setItem(row, 5, classroom_item)
 
-                # Veritabanına kaydet - Her derslik için ayrı kayıt
+                # Veritabanına kaydet
                 for item in items:
                     cursor.execute(
                         'INSERT INTO exams (course_id, date, time, duration, type, classroom_id) VALUES (?, ?, ?, ?, ?, ?)',
@@ -2055,6 +2458,7 @@ class MainWindow(QMainWindow):
             info_msg += f'{len(dates)} gün kullanıldı.\n'
             if multi_classroom_exams > 0:
                 info_msg += f'\n⚠️ {multi_classroom_exams} sınav birden fazla derslikte yapılacak.'
+            info_msg += f'\n\n✓ Tüm oturma planları temizlendi.'
 
             QMessageBox.information(self, 'Başarılı', info_msg)
 
@@ -2064,6 +2468,26 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, 'Hata', f'Program oluşturulurken hata oluştu:\n{str(e)}')
             import traceback
             traceback.print_exc()
+
+    def clear_all_seating_plans(self):
+        """Tüm oturma planlarını sil"""
+        try:
+            cursor = self.db.conn.cursor()
+            cursor.execute('DELETE FROM seating')
+            self.db.conn.commit()
+
+            # Seating tab'ını temizle (varsa)
+            if hasattr(self, 'seating_table'):
+                self.seating_table.setRowCount(0)
+            if hasattr(self, 'seating_view_layout'):
+                self.clear_seating_view()
+            if hasattr(self, 'seating_view_toggle'):
+                self.seating_view_toggle.setVisible(False)
+            if hasattr(self, 'seating_view_scroll'):
+                self.seating_view_scroll.setVisible(False)
+
+        except Exception as e:
+            QMessageBox.warning(self, 'Hata', f'Oturma planları silinirken hata:\n{str(e)}')
 
     def export_schedule(self):
         if self.schedule_table.rowCount() == 0:
@@ -2109,21 +2533,18 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, 'Hata', f'Dosya kaydedilemedi:\n{str(e)}')
 
-
-
-
-
-
-
-
-
-
-
-
-
     def seating_plan_tab(self):
         widget = QWidget()
         layout = QVBoxLayout()
+
+        clear_seating_btn = QPushButton('🗑️ Tüm Oturma Planlarını Sil')
+        clear_seating_btn.setStyleSheet(
+            "QPushButton { background-color: #f44336; color: white; padding: 10px; "
+            "font-size: 11pt; font-weight: bold; border-radius: 5px; }"
+            "QPushButton:hover { background-color: #d32f2f; }"
+        )
+        clear_seating_btn.clicked.connect(self.clear_all_seating_plans)
+        layout.addWidget(clear_seating_btn)
 
         # Başlık
         title = QLabel('Oturma Planı Oluşturma')
@@ -2210,6 +2631,13 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         widget.setLayout(layout)
         return widget
+
+    def clear_all_seating_plans(self):
+        cursor = self.db.conn.cursor()
+        cursor.execute('DELETE FROM seating')
+        self.db.conn.commit()
+        self.refresh_seating_tab()
+        QMessageBox.information(self, 'Başarılı', 'Tüm oturma planları silindi.')
 
     def toggle_seating_view(self):
         is_visible = self.seating_view_scroll.isVisible()
@@ -2298,7 +2726,7 @@ class MainWindow(QMainWindow):
 
         # Aynı ders, tarih ve saatte olan TÜM sınav kayıtlarını çek (birden fazla derslik)
         cursor.execute('''
-            SELECT e.id, e.classroom_id, cl.code, cl.name, cl.rows, cl.columns, cl.capacity
+            SELECT e.id, e.classroom_id, cl.code, cl.name, cl.rows, cl.columns, cl.capacity, cl.seat_group
             FROM exams e
             JOIN classrooms cl ON e.classroom_id = cl.id
             WHERE e.course_id = ? AND e.date = ? AND e.time = ?
@@ -2327,12 +2755,12 @@ class MainWindow(QMainWindow):
             return
 
         # Toplam kapasite hesapla (capacity alanından)
-        total_capacity = sum(capacity for _, _, _, _, _, _, capacity in exam_classrooms)
+        total_capacity = sum(capacity for _, _, _, _, _, _, capacity, _ in exam_classrooms)
 
         if len(students) > total_capacity:
             classroom_list = '\n'.join([
                 f'  • {cl_code} - {cl_name} (Kapasite: {capacity})'
-                for _, _, cl_code, cl_name, _, _, capacity in exam_classrooms
+                for _, _, cl_code, cl_name, _, _, capacity, _ in exam_classrooms
             ])
 
             QMessageBox.warning(
@@ -2349,7 +2777,7 @@ class MainWindow(QMainWindow):
         # Derslik bilgilerini göster
         classroom_info = '\n'.join([
             f'  • {cl_code} - {cl_name} (Kapasite: {capacity})'
-            for _, _, cl_code, cl_name, _, _, capacity in exam_classrooms
+            for _, _, cl_code, cl_name, _, _, capacity, _ in exam_classrooms
         ])
 
         reply = QMessageBox.question(
@@ -2370,7 +2798,7 @@ class MainWindow(QMainWindow):
 
         try:
             # Tüm ilgili sınav kayıtları için eski oturma planlarını sil
-            exam_ids = [e_id for e_id, _, _, _, _, _, _ in exam_classrooms]
+            exam_ids = [e_id for e_id, _, _, _, _, _, _, _ in exam_classrooms]
             cursor.executemany('DELETE FROM seating WHERE exam_id = ?', [(e_id,) for e_id in exam_ids])
 
             # Öğrencileri karıştır
@@ -2382,12 +2810,21 @@ class MainWindow(QMainWindow):
             total_placed = 0
             placement_info = []
 
-            for e_id, cl_id, cl_code, cl_name, rows, cols, capacity in exam_classrooms:
+            for e_id, cl_id, cl_code, cl_name, rows, columns, capacity, seat_group in exam_classrooms:
                 # Bu derslik için tüm koltuk pozisyonlarını oluştur
                 all_seats = []
                 for r in range(rows):
-                    for c in range(cols):
-                        all_seats.append((r + 1, c + 1))
+                    for c in range(columns):
+                        available_positions = []
+                        if seat_group == 2:
+                            available_positions = [2]  # sıranın sağına
+                        elif seat_group == 3:
+                            available_positions = [1, 3]  # bir sağ bir sol
+                        elif seat_group == 4:
+                            available_positions = [1, 4]  # bir sağ bir sol, ortası boş
+                        for s in available_positions:
+                            seat_col = c * seat_group + s
+                            all_seats.append((r + 1, seat_col))
 
                 # Koltukları RASTGELE karıştır
                 random.shuffle(all_seats)
@@ -2490,7 +2927,7 @@ class MainWindow(QMainWindow):
         # Bu sınav grubu için kullanılan tüm derslikleri çek
         placeholders = ','.join('?' * len(exam_ids))
         cursor.execute(f'''
-            SELECT DISTINCT cl.id, cl.code, cl.name, cl.rows, cl.columns, st.exam_id
+            SELECT DISTINCT cl.id, cl.code, cl.name, cl.rows, cl.columns, st.exam_id, cl.seat_group
             FROM seating st
             JOIN classrooms cl ON st.classroom_id = cl.id
             WHERE st.exam_id IN ({placeholders})
@@ -2527,12 +2964,12 @@ class MainWindow(QMainWindow):
         # Her derslik için ayrı görselleştirme
         total_students = 0
 
-        for classroom_id, cl_code, cl_name, rows, cols, related_exam_id in classrooms_data:
+        for classroom_id, cl_code, cl_name, rows, columns, related_exam_id, seat_group in classrooms_data:
             # Derslik başlığı
             classroom_title = QLabel(
                 f'<div style="text-align: center;">'
                 f'<h3 style="margin: 8px;">{cl_code} - {cl_name}</h3>'
-                f'<p style="margin: 3px; color: #666;">Düzen: {rows}x{cols}</p>'
+                f'<p style="margin: 3px; color: #666;">Düzen: {rows}x{columns} (Yapı: {seat_group}\'li)</p>'
                 f'</div>'
             )
             classroom_title.setStyleSheet(
@@ -2561,31 +2998,42 @@ class MainWindow(QMainWindow):
             seating_dict = {(r, c): (num, name) for r, c, num, name in seating_data}
 
             for r in range(rows):
-                for c in range(cols):
-                    if (r + 1, c + 1) in seating_dict:
-                        number, student_name = seating_dict[(r + 1, c + 1)]
+                col_idx = 0
+                for c in range(columns):
+                    if c > 0:
+                        spacer = QLabel()
+                        spacer.setFixedWidth(20)
+                        seating_grid.addWidget(spacer, r, col_idx)
+                        col_idx += 1
 
-                        # Öğrenci butonu
-                        btn = QPushButton(f'{number}\n{student_name}')
-                        btn.setStyleSheet(
-                            "QPushButton { background-color: #81C784; color: white; "
-                            "border: 2px solid #4CAF50; border-radius: 5px; "
-                            "font-weight: bold; padding: 5px; font-size: 9pt; }"
-                            "QPushButton:hover { background-color: #66BB6A; }"
-                        )
-                        btn.setFixedSize(120, 60)
-                        btn.setToolTip(f'Sıra {r + 1}, Sütun {c + 1}\n{number} - {student_name}')
-                        seating_grid.addWidget(btn, r, c)
-                    else:
-                        # Boş koltuk
-                        empty_label = QLabel('Boş')
-                        empty_label.setStyleSheet(
-                            "background-color: #EEEEEE; border: 1px dashed #BDBDBD; "
-                            "border-radius: 5px; color: #757575;"
-                        )
-                        empty_label.setAlignment(Qt.AlignCenter)
-                        empty_label.setFixedSize(120, 60)
-                        seating_grid.addWidget(empty_label, r, c)
+                    for s in range(seat_group):
+                        global_col = c * seat_group + s + 1
+                        if (r + 1, global_col) in seating_dict:
+                            number, student_name = seating_dict[(r + 1, global_col)]
+
+                            # Öğrenci butonu
+                            btn = QPushButton(f'{number}\n{student_name}')
+                            btn.setStyleSheet(
+                                "QPushButton { background-color: #81C784; color: white; "
+                                "border: 2px solid #4CAF50; border-radius: 5px; "
+                                "font-weight: bold; padding: 5px; font-size: 9pt; }"
+                                "QPushButton:hover { background-color: #66BB6A; }"
+                            )
+                            btn.setFixedSize(120, 60)
+                            btn.setToolTip(f'Sıra {r + 1}, Grup {c + 1}, Koltuk {s + 1}\n{number} - {student_name}')
+                            seating_grid.addWidget(btn, r, col_idx)
+                        else:
+                            # Boş koltuk
+                            empty_label = QLabel('Boş')
+                            empty_label.setStyleSheet(
+                                "background-color: #EEEEEE; border: 1px dashed #BDBDBD; "
+                                "border-radius: 5px; color: #757575;"
+                            )
+                            empty_label.setAlignment(Qt.AlignCenter)
+                            empty_label.setFixedSize(120, 60)
+                            seating_grid.addWidget(empty_label, r, col_idx)
+
+                        col_idx += 1
 
             grid_widget = QWidget()
             grid_widget.setLayout(seating_grid)
@@ -2865,6 +3313,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, 'Hata', f'PDF oluşturulamadı:\n\n{str(e)}')
             import traceback
             traceback.print_exc()
+
 
 
 
